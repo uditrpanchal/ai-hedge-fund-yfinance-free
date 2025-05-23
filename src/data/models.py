@@ -92,7 +92,7 @@ class InsiderTrade(BaseModel):
     shares_owned_before_transaction: float | None
     shares_owned_after_transaction: float | None
     security_title: str | None
-    filing_date: str
+    filing_date: str | None = None
 
 
 class InsiderTradeResponse(BaseModel):
@@ -101,11 +101,11 @@ class InsiderTradeResponse(BaseModel):
 
 class CompanyNews(BaseModel):
     ticker: str
-    title: str
-    author: str
-    source: str
-    date: str
-    url: str
+    title: str | None = None
+    author: str | None = None
+    source: str | None = None
+    date: str | None = None
+    url: str | None = None
     sentiment: str | None = None
 
 

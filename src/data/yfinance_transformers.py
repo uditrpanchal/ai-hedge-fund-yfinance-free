@@ -51,7 +51,7 @@ def get_price_response(ticker_symbol: str, period="1y", interval="1d", start_dat
             logging.warning(f"get_price_response: Fetcher for {ticker_symbol} is invalid. Returning empty PriceResponse.")
             return PriceResponse(ticker=ticker_symbol, prices=[])
         
-        prices_df = fetcher.get_historical_prices(period=period, interval=interval, start=start_date, end=end_date)
+        prices_df = fetcher.get_historical_prices(period=period, interval=interval, start_date=start_date, end_date=end_date) # Corrected 'start' to 'start_date'
         if prices_df is None or prices_df.empty:
             logging.info(f"No historical price data found for {ticker_symbol} for the given parameters.")
             return PriceResponse(ticker=ticker_symbol, prices=[])
@@ -147,15 +147,35 @@ def get_company_news_response(ticker_symbol: str) -> CompanyNewsResponse | None:
             
         news_list = []
         for item in news_list_raw: # item is a dict from yfinance
-            publish_time, date_str = item.get('providerPublishTime'), None
-            if publish_time: # Convert Unix timestamp to ISO format string
-                try: date_str = datetime.fromtimestamp(int(publish_time)).strftime('%Y-%m-%d %H:%M:%S')
-                except (ValueError, TypeError) as e_ts: logging.warning(f"Error converting news timestamp for {ticker_symbol}: {e_ts}. Timestamp: {publish_time}")
-            news_list.append(CompanyNews(
-                ticker=ticker_symbol, title=item.get('title'), author=item.get('publisher'), # Using publisher as author
-                source=item.get('publisher'), date=date_str, url=item.get('link'), 
-                sentiment=None # Explicitly None for GAP
-            ))
+            title = item.get('title')
+            publisher = item.get('publisher') # Used for author and source
+            link = item.get('link')
+            publish_time = item.get('providerPublishTime')
+            
+            date_str = None
+            if publish_time is not None:
+                try:
+                    # Ensure publish_time is an int or float before conversion
+                    date_str = datetime.fromtimestamp(int(float(publish_time))).strftime('%Y-%m-%d %H:%M:%S')
+                except (ValueError, TypeError, OverflowError) as e_ts:
+                    logging.warning(f"Error converting news timestamp for {ticker_symbol}: {e_ts}. Timestamp: {publish_time}")
+                    date_str = None # Ensure date_str is None if conversion fails
+            
+            news_item_data = {
+                "ticker": ticker_symbol,
+                "title": str(title) if title is not None else None,
+                "author": str(publisher) if publisher is not None else None,
+                "source": str(publisher) if publisher is not None else None,
+                "date": date_str, # Already a string or None
+                "url": str(link) if link is not None else None,
+                "sentiment": None # Explicitly None for GAP
+            }
+            try:
+                news_list.append(CompanyNews(**news_item_data))
+            except Exception as pydantic_error: # Catch potential Pydantic error for this specific item
+                logging.error(f"Pydantic validation error for CompanyNews item {news_item_data}: {pydantic_error}")
+                # Optionally, append a "broken" item or skip, here we skip
+                continue
         return CompanyNewsResponse(news=news_list)
     except Exception as e:
         logging.error(f"Error in get_company_news_response for {ticker_symbol}: {e}", exc_info=True)
@@ -186,42 +206,76 @@ def get_insider_trades_response(ticker_symbol: str) -> InsiderTradeResponse | No
             return InsiderTradeResponse(insider_trades=[])
         
         insider_trades_list = []
-        # Helper to safely get data from DataFrame row, considering yfinance column name variations
-        def get_row_val(r, potential_names, default=None):
-            for name in potential_names:
-                val = r.get(name) # Use .get for Series to avoid KeyError if name is not present
-                if pd.notna(val): return val
-            return default
+        
+        # yfinance column names can be inconsistent. Common options:
+        # Insider: 'Insider', 'Name'
+        # Position: 'Position', 'Title'
+        # Date: 'Start Date', 'Date' (Transaction Date)
+        # Shares: 'Shares'
+        # Value: 'Value' (Total value of transaction)
+        # Shares Held After: 'Shares Held After', 'Post Transaction Shares'
 
-        for _, row in transactions_df.iterrows(): # Iterate through DataFrame rows
-            name = get_row_val(row, ['Insider', 'Name'])
-            title = get_row_val(row, ['Position', 'Title']) # 'Position' is more common in yfinance
-            is_dir = bool("director" in str(title).lower() or "dir" in str(title).lower()) if title else False
-            date_val = get_row_val(row, ['Start Date', 'Date'])
-            date_str = pd.to_datetime(date_val).strftime('%Y-%m-%d') if pd.notna(date_val) else None
+        for _, row in transactions_df.iterrows():
+            # Use .get() with default None for all raw fields to prevent KeyError
+            name_raw = row.get('Insider', row.get('Name'))
+            title_raw = row.get('Position', row.get('Title'))
+            date_raw = row.get('Start Date', row.get('Date'))
+            shares_raw = row.get('Shares')
+            value_raw = row.get('Value') # This field is often missing or inconsistent
+            shares_held_after_raw = row.get('Shares Held After', row.get('Post Transaction Shares'))
+
+            name = str(name_raw) if pd.notna(name_raw) else None
+            title = str(title_raw) if pd.notna(title_raw) else None
+            is_dir = bool("director" in title.lower() or "dir" in title.lower()) if title else None # is_board_director is Optional[bool]
+
+            transaction_date_str = None
+            if pd.notna(date_raw):
+                try:
+                    transaction_date_str = pd.to_datetime(date_raw).strftime('%Y-%m-%d')
+                except Exception as e_date:
+                    logging.warning(f"Could not parse transaction_date '{date_raw}': {e_date}")
+                    transaction_date_str = None
             
-            shares_val = get_row_val(row, ['Shares'], 0.0) # Default to 0.0 if not found
-            value_val = get_row_val(row, ['Value']) # No default, might be missing
+            transaction_shares = None
+            if pd.notna(shares_raw):
+                try: transaction_shares = float(shares_raw)
+                except (ValueError, TypeError): transaction_shares = None
             
-            shares = pd.to_numeric(shares_val, errors='coerce')
-            value = pd.to_numeric(value_val, errors='coerce') if value_val is not None else None # Coerce only if value_val exists
+            transaction_value = None
+            if pd.notna(value_raw): # Only attempt conversion if value_raw is not NaN/None
+                try: transaction_value = float(value_raw)
+                except (ValueError, TypeError): transaction_value = None
+
+            price_ps = None
+            if transaction_shares is not None and transaction_shares != 0 and \
+               transaction_value is not None: # transaction_value must exist
+                price_ps = transaction_value / transaction_shares
             
-            shares = 0.0 if pd.isna(shares) else shares # Ensure shares is a float
-            price_ps = value / shares if shares != 0 and value is not None and pd.notna(value) else None
-            
-            after_shares_val = get_row_val(row, ['Shares Held After', 'Post Transaction Shares'])
-            after_shares = pd.to_numeric(after_shares_val, errors='coerce')
-            after_shares = int(after_shares) if pd.notna(after_shares) else None
-            
-            insider_trades_list.append(InsiderTrade(
-                ticker=ticker_symbol, issuer=ticker_symbol, name=name, title=title, is_board_director=is_dir,
-                transaction_date=date_str, transaction_shares=float(shares) if shares is not None else None,
-                transaction_price_per_share=float(price_ps) if price_ps is not None else None,
-                transaction_value=float(value) if value is not None and pd.notna(value) else None,
-                shares_owned_after_transaction=after_shares, security_title="Common Stock", # Default security title
-                # Explicitly None for GAPs
-                shares_owned_before_transaction=None, filing_date=None 
-            ))
+            shares_after = None
+            if pd.notna(shares_held_after_raw):
+                try: shares_after = int(float(shares_held_after_raw)) # Ensure it's float first then int
+                except (ValueError, TypeError): shares_after = None
+
+            insider_trade_data = {
+                "ticker": ticker_symbol,
+                "issuer": ticker_symbol, # Assuming issuer is the same as ticker symbol
+                "name": name,
+                "title": title,
+                "is_board_director": is_dir,
+                "transaction_date": transaction_date_str,
+                "transaction_shares": transaction_shares,
+                "transaction_price_per_share": price_ps,
+                "transaction_value": transaction_value,
+                "shares_owned_before_transaction": None, # GAP
+                "shares_owned_after_transaction": shares_after,
+                "security_title": "Common Stock", # Default
+                "filing_date": None # Explicitly None, as this is a known GAP from yfinance
+            }
+            try:
+                insider_trades_list.append(InsiderTrade(**insider_trade_data))
+            except Exception as pydantic_error:
+                 logging.error(f"Pydantic validation error for InsiderTrade item {insider_trade_data}: {pydantic_error}")
+                 continue
         return InsiderTradeResponse(insider_trades=insider_trades_list)
     except Exception as e:
         logging.error(f"Error in get_insider_trades_response for {ticker_symbol}: {e}", exc_info=True)
@@ -273,13 +327,13 @@ def get_financial_statements_response(ticker_symbol: str) -> LineItemResponse | 
                             if valid_acc_name and valid_acc_name[0].isdigit(): valid_acc_name = "_" + valid_acc_name # Prepend underscore if starts with digit
                             
                             # Store value, converting to basic types if necessary
-                            if pd.isna(val): dyn_fields[valid_acc_name] = None
-                            elif isinstance(val, (int, float, bool, str)): dyn_fields[valid_acc_name] = val
+                            if pd.isna(val): dynamic_fields[valid_acc_name] = None
+                            elif isinstance(val, (int, float, bool, str)): dynamic_fields[valid_acc_name] = val
                             else: # Attempt to convert other numeric types (e.g., np.int64) to float
-                                try: dyn_fields[valid_acc_name] = float(val)
+                                try: dynamic_fields[valid_acc_name] = float(val)
                                 except (ValueError, TypeError): 
                                     logging.warning(f"Could not convert value '{val}' for account '{acc_name}' to float. Storing as string.")
-                                    dyn_fields[valid_acc_name] = str(val)
+                                    dynamic_fields[valid_acc_name] = str(val)
                         
                         all_items.append(LineItem(
                             ticker=ticker_symbol, report_period=report_period_str, period=speriod, 

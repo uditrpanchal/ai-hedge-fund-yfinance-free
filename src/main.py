@@ -13,6 +13,7 @@ from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.progress import progress
 from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
 from src.utils.ollama import ensure_ollama_and_model
+import os # Added for os.getenv
 
 import argparse
 from datetime import datetime
@@ -154,100 +155,138 @@ if __name__ == "__main__":
 
     # Select analysts
     selected_analysts = None
-    choices = questionary.checkbox(
-        "Select your AI analysts.",
-        choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
-        instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done to run the hedge fund.\n",
-        validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
-        style=questionary.Style(
-            [
-                ("checkbox-selected", "fg:green"),
-                ("selected", "fg:green noinherit"),
-                ("highlighted", "noinherit"),
-                ("pointer", "noinherit"),
-            ]
-        ),
-    ).ask()
+    # If tickers are provided via CLI, assume non-interactive mode for analyst and model selection
+    if args.tickers:
+        print("Tickers provided via CLI. Detecting available LLM provider for non-interactive run...")
+        selected_analysts = [value for _, value in ANALYST_ORDER] # Default to all analysts
+        
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+        
+        # Define placeholder values (ensure these match exactly what's in .env or would be default)
+        openai_placeholders = ["your-openai-api-key", "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", "dummy_openai_api_key_for_testing_do_not_use_real_key"]
+        deepseek_env_placeholder = "sk-10cb96846aa24bcb9c6a26d722132041" # This is the value in .env
 
-    if not choices:
-        print("\n\nInterrupt received. Exiting...")
-        sys.exit(0)
-    else:
-        selected_analysts = choices
-        print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in choices)}\n")
-
-    # Select LLM model based on whether Ollama is being used
-    model_name = ""
-    model_provider = ""
-
-    if args.ollama:
-        print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
-
-        # Select from Ollama-specific models
-        model_name: str = questionary.select(
-            "Select your Ollama model:",
-            choices=[questionary.Choice(display, value=value) for display, value, _ in OLLAMA_LLM_ORDER],
+        use_openai = openai_api_key and openai_api_key not in openai_placeholders
+        
+        if use_openai:
+            model_name = "gpt-4o" # Default OpenAI model
+            model_provider = ModelProvider.OPENAI.value
+            print(f"Using OpenAI model: {model_name} as valid OPENAI_API_KEY is available.")
+        # Explicitly check if the DeepSeek key is the known placeholder from .env
+        elif deepseek_api_key == deepseek_env_placeholder:
+            default_deepseek_model_info = next((m for m in LLM_ORDER if m[2] == ModelProvider.DEEPSEEK.value and not m[0].endswith("(Custom)")), None)
+            if default_deepseek_model_info:
+                model_name = default_deepseek_model_info[1] # e.g., 'deepseek-chat' or 'deepseek-reasoner'
+                model_provider = ModelProvider.DEEPSEEK.value
+                print(f"Using DeepSeek model: {model_name} with placeholder DEEPSEEK_API_KEY ('{deepseek_api_key}') for testing.")
+            else: # This case should ideally not be hit if LLM_ORDER is correctly populated
+                print(f"{Fore.RED}No default DeepSeek model found in LLM_ORDER configuration. Exiting.{Style.RESET_ALL}")
+                sys.exit(1)
+        else: # Neither a valid OpenAI key nor the specific DeepSeek placeholder was found
+              # This branch would also be hit if DEEPSEEK_API_KEY is set to something else entirely (a real, non-placeholder key)
+              # but for this subtask, we are focused on the placeholder.
+            print(f"{Fore.RED}Required API key (valid OpenAI or specific DeepSeek placeholder '{deepseek_env_placeholder}') not found for non-interactive run. Please check your .env file.{Style.RESET_ALL}")
+            print(f"DEBUG: OpenAI Key set: {bool(openai_api_key)} (value: '{openai_api_key}'), DeepSeek Key value: '{deepseek_api_key}'")
+            sys.exit(1)
+            
+        print(f"\nUsing default analysts: {', '.join(Fore.GREEN + sa.title().replace('_', ' ') + Style.RESET_ALL for sa in selected_analysts)}")
+        print(f"Using default model: {Fore.CYAN}{model_provider}{Style.RESET_ALL} - {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+    else: # Interactive mode
+        choices = questionary.checkbox(
+            "Select your AI analysts.",
+            choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
+            instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done to run the hedge fund.\n",
+            validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
             style=questionary.Style(
                 [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
+                    ("checkbox-selected", "fg:green"),
+                    ("selected", "fg:green noinherit"),
+                    ("highlighted", "noinherit"),
+                    ("pointer", "noinherit"),
                 ]
             ),
         ).ask()
 
-        if not model_name:
+        if not choices:
             print("\n\nInterrupt received. Exiting...")
             sys.exit(0)
+        else:
+            selected_analysts = choices
+            print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in choices)}\n")
 
-        if model_name == "-":
-            model_name = questionary.text("Enter the custom model name:").ask()
+        # Select LLM model based on whether Ollama is being used
+        model_name = ""
+        model_provider = ""
+
+        if args.ollama:
+            print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
+
+            # Select from Ollama-specific models
+            model_name: str = questionary.select(
+                "Select your Ollama model:",
+                choices=[questionary.Choice(display, value=value) for display, value, _ in OLLAMA_LLM_ORDER],
+                style=questionary.Style(
+                    [
+                        ("selected", "fg:green bold"),
+                        ("pointer", "fg:green bold"),
+                        ("highlighted", "fg:green"),
+                        ("answer", "fg:green bold"),
+                    ]
+                ),
+            ).ask()
+
             if not model_name:
                 print("\n\nInterrupt received. Exiting...")
                 sys.exit(0)
 
-        # Ensure Ollama is installed, running, and the model is available
-        if not ensure_ollama_and_model(model_name):
-            print(f"{Fore.RED}Cannot proceed without Ollama and the selected model.{Style.RESET_ALL}")
-            sys.exit(1)
-
-        model_provider = ModelProvider.OLLAMA.value
-        print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-    else:
-        # Use the standard cloud-based LLM selection
-        model_choice = questionary.select(
-            "Select your LLM model:",
-            choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-
-        if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-
-        model_name, model_provider = model_choice
-
-        # Get model info using the helper function
-        model_info = get_model_info(model_name, model_provider)
-        if model_info:
-            if model_info.is_custom():
+            if model_name == "-":
                 model_name = questionary.text("Enter the custom model name:").ask()
                 if not model_name:
                     print("\n\nInterrupt received. Exiting...")
                     sys.exit(0)
 
-            print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+            # Ensure Ollama is installed, running, and the model is available
+            if not ensure_ollama_and_model(model_name):
+                print(f"{Fore.RED}Cannot proceed without Ollama and the selected model.{Style.RESET_ALL}")
+                sys.exit(1)
+
+            model_provider = ModelProvider.OLLAMA.value
+            print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
         else:
-            model_provider = "Unknown"
-            print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+            # Use the standard cloud-based LLM selection
+            model_choice = questionary.select(
+                "Select your LLM model:",
+                choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
+                style=questionary.Style(
+                    [
+                        ("selected", "fg:green bold"),
+                        ("pointer", "fg:green bold"),
+                        ("highlighted", "fg:green"),
+                        ("answer", "fg:green bold"),
+                    ]
+                ),
+            ).ask()
+
+            if not model_choice:
+                print("\n\nInterrupt received. Exiting...")
+                sys.exit(0)
+
+            model_name, model_provider = model_choice
+
+            # Get model info using the helper function
+            model_info = get_model_info(model_name, model_provider)
+            if model_info:
+                if model_info.is_custom():
+                    model_name = questionary.text("Enter the custom model name:").ask()
+                    if not model_name:
+                        print("\n\nInterrupt received. Exiting...")
+                        sys.exit(0)
+
+                print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+            else:
+                model_provider = "Unknown" # Should not happen if choice is from LLM_ORDER
+                print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
 
     # Create the workflow with selected analysts
     workflow = create_workflow(selected_analysts)

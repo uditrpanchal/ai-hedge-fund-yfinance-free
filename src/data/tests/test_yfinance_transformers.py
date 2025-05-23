@@ -346,4 +346,4 @@ def test_fetcher_init_missing_validation_field(mock_yf_ticker_class):
     assert facts_res is not None
     assert facts_res.company_facts.ticker == 'MISSINGFIELD'
     assert facts_res.company_facts.name is None 
-```
+
