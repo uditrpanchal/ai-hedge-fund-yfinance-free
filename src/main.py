@@ -164,19 +164,17 @@ if __name__ == "__main__":
         deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
         
         # Define placeholder values (ensure these match exactly what's in .env or would be default)
-#        openai_placeholders = ["your-openai-api-key", "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", "dummy_openai_api_key_for_testing_do_not_use_real_key"]
-#        deepseek_env_placeholder = "sk-10cb96846aa24bcb9c6a26d722132041" # This is the value in .env
-        openai_placeholders = ["your-openai-api-key", "skA", "dummy_openai_api_key_for_testing_do_not_use_real_key"]
-        deepseek_env_placeholder = "sk-1" # This is the value in .env
+
         
-        use_openai = openai_api_key and openai_api_key not in openai_placeholders
+ #       use_openai = openai_api_key and openai_api_key not in openai_placeholders
+        use_openai = openai_api_key
         
         if use_openai:
             model_name = "gpt-4o" # Default OpenAI model
             model_provider = ModelProvider.OPENAI.value
             print(f"Using OpenAI model: {model_name} as valid OPENAI_API_KEY is available.")
         # Explicitly check if the DeepSeek key is the known placeholder from .env
-        elif deepseek_api_key == deepseek_env_placeholder:
+        elif deepseek_api_key == 0:
             default_deepseek_model_info = next((m for m in LLM_ORDER if m[2] == ModelProvider.DEEPSEEK.value and not m[0].endswith("(Custom)")), None)
             if default_deepseek_model_info:
                 model_name = default_deepseek_model_info[1] # e.g., 'deepseek-chat' or 'deepseek-reasoner'
@@ -188,7 +186,7 @@ if __name__ == "__main__":
         else: # Neither a valid OpenAI key nor the specific DeepSeek placeholder was found
               # This branch would also be hit if DEEPSEEK_API_KEY is set to something else entirely (a real, non-placeholder key)
               # but for this subtask, we are focused on the placeholder.
-            print(f"{Fore.RED}Required API key (valid OpenAI or specific DeepSeek placeholder '{deepseek_env_placeholder}') not found for non-interactive run. Please check your .env file.{Style.RESET_ALL}")
+            print(f"{Fore.RED}Required API key (valid OpenAI or specific DeepSeek placeholder '') not found for non-interactive run. Please check your .env file.{Style.RESET_ALL}")
             print(f"DEBUG: OpenAI Key set: {bool(openai_api_key)} (value: '{openai_api_key}'), DeepSeek Key value: '{deepseek_api_key}'")
             sys.exit(1)
             
