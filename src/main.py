@@ -164,9 +164,11 @@ if __name__ == "__main__":
         deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
         
         # Define placeholder values (ensure these match exactly what's in .env or would be default)
-        openai_placeholders = ["your-openai-api-key", "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", "dummy_openai_api_key_for_testing_do_not_use_real_key"]
-        deepseek_env_placeholder = "sk-10cb96846aa24bcb9c6a26d722132041" # This is the value in .env
-
+#        openai_placeholders = ["your-openai-api-key", "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", "dummy_openai_api_key_for_testing_do_not_use_real_key"]
+#        deepseek_env_placeholder = "sk-10cb96846aa24bcb9c6a26d722132041" # This is the value in .env
+        openai_placeholders = ["your-openai-api-key", "skA", "dummy_openai_api_key_for_testing_do_not_use_real_key"]
+        deepseek_env_placeholder = "sk-1" # This is the value in .env
+        
         use_openai = openai_api_key and openai_api_key not in openai_placeholders
         
         if use_openai:
