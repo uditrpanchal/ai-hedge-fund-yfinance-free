@@ -157,9 +157,9 @@ if __name__ == "__main__":
     choices = questionary.checkbox(
         "Select your AI analysts.",
         choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
-            instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done to run the hedge fund.\n",
-            validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
-            style=questionary.Style(
+        instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done to run the hedge fund.\n", # Corrected indentation
+        validate=lambda x: len(x) > 0 or "You must select at least one analyst.", # Corrected indentation
+        style=questionary.Style( # Corrected indentation
                 [
                     ("checkbox-selected", "fg:green"),
                     ("selected", "fg:green noinherit"),
@@ -169,12 +169,12 @@ if __name__ == "__main__":
             ),
         ).ask()
 
-        if not choices:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-        else:
-            selected_analysts = choices
-            print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in selected_analysts)}\n")
+    if not choices:
+        print("\n\nInterrupt received. Exiting...")
+        sys.exit(0)
+    else:
+        selected_analysts = choices
+        print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in selected_analysts)}\n")
 
     # Select LLM model based on whether Ollama is being used
     model_name = "" 
@@ -214,9 +214,9 @@ if __name__ == "__main__":
 
             model_provider = ModelProvider.OLLAMA.value
             print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-        else:
-            # Use the standard cloud-based LLM selection
-            model_choice = questionary.select(
+    else: # Corrected indentation
+        # Use the standard cloud-based LLM selection
+        model_choice = questionary.select(
                 "Select your LLM model:",
                 choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
                 style=questionary.Style(
@@ -229,28 +229,28 @@ if __name__ == "__main__":
                 ),
             ).ask()
 
-            if not model_choice:
-                print("\n\nInterrupt received. Exiting...")
-                sys.exit(0)
+        if not model_choice: # Corrected indentation
+            print("\n\nInterrupt received. Exiting...")
+            sys.exit(0)
 
-            model_name, model_provider = model_choice
+        model_name, model_provider = model_choice
 
-            # Get model info using the helper function
-            model_info = get_model_info(model_name, model_provider)
-            if model_info:
-                if model_info.is_custom():
-                    model_name = questionary.text("Enter the custom model name:").ask()
-                    if not model_name:
-                        print("\n\nInterrupt received. Exiting...")
-                        sys.exit(0)
+        # Get model info using the helper function
+        model_info = get_model_info(model_name, model_provider)
+        if model_info:
+            if model_info.is_custom():
+                model_name = questionary.text("Enter the custom model name:").ask()
+                if not model_name:
+                    print("\n\nInterrupt received. Exiting...")
+                    sys.exit(0)
 
-                print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-            else:
-                model_provider = "Unknown" # Should not happen if choice is from LLM_ORDER
-                print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+            print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+        else:
+            model_provider = "Unknown" # Should not happen if choice is from LLM_ORDER
+            print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
 
     # Create the workflow with selected analysts
-    if not selected_analysts: 
+    if not selected_analysts: # This line should be aligned with the `if args.ollama:` and its `else` block
         print("\nNo analysts selected or process interrupted. Exiting.")
         sys.exit(0)
         
