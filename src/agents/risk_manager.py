@@ -3,6 +3,7 @@ from src.graph.state import AgentState, show_agent_reasoning
 from src.utils.progress import progress
 from src.tools.api import get_prices, prices_to_df
 import json
+import logging # Added import
 
 
 ##### Risk Management Agent #####
@@ -22,17 +23,26 @@ def risk_management_agent(state: AgentState):
     for ticker in all_tickers:
         progress.update_status("risk_management_agent", ticker, "Fetching price data")
         
+        # Logging before get_prices call
+        logging.info(f"RiskManager: Calling get_prices for {ticker} with start_date={data['end_date']}, end_date={data['end_date']}")
+        
         prices = get_prices(
             ticker=ticker,
             start_date=data["end_date"],  # Just get the latest price
             end_date=data["end_date"],
         )
 
+        # Logging after get_prices call
+        logging.info(f"RiskManager: Received prices for {ticker}: {prices}")
+
         if not prices:
             progress.update_status("risk_management_agent", ticker, "Warning: No price data found")
             continue
 
         prices_df = prices_to_df(prices)
+        
+        # Logging after prices_to_df call
+        logging.info(f"RiskManager: For {ticker}, prices_df is empty: {prices_df.empty}. Head: {prices_df.head().to_string() if not prices_df.empty else 'N/A'}")
         
         if not prices_df.empty:
             current_price = prices_df["close"].iloc[-1]
@@ -58,6 +68,8 @@ def risk_management_agent(state: AgentState):
         progress.update_status("risk_management_agent", ticker, "Calculating position limits")
         
         if ticker not in current_prices:
+            # Logging if ticker not in current_prices
+            logging.warning(f"RiskManager: Ticker {ticker} not found in current_prices. Price data might be missing or empty after processing.")
             progress.update_status("risk_management_agent", ticker, "Failed: No price data available")
             risk_analysis[ticker] = {
                 "remaining_position_limit": 0.0,

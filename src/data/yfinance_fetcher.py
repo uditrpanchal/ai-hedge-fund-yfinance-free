@@ -112,17 +112,21 @@ class YFinanceDataFetcher:
         if start_date and end_date and start_date == end_date:
             try:
                 end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
-                effective_end_date = (end_date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
-                logging.info(f"Adjusted end_date to {effective_end_date} for single-day fetch on {start_date} for ticker {self.ticker_symbol}.")
+                effective_end_date = (end_date_obj + timedelta(days=4)).strftime("%Y-%m-%d") # Changed to days=4
+                logging.info(f"Adjusted end_date to {effective_end_date} for single-day fetch query on {start_date} for ticker {self.ticker_symbol}.") # Updated log message
             except ValueError:
-                logging.warning(f"Could not parse end_date '{end_date}' to adjust for single-day fetch. Using original end_date.")
+                logging.warning(f"Could not parse end_date '{end_date}' to adjust for single-day fetch query. Using original end_date.") # Updated log message
                 # Keep effective_end_date as original end_date
+        
+        logging.info(f"YFinanceFetcher: Attempting to fetch history for {self.ticker_symbol} with period={period}, interval={interval}, start={start_date}, end={effective_end_date}")
 
         try:
             # Use effective_end_date in the history call
-            return self.ticker.history(period=period, interval=interval, start=start_date, end=effective_end_date)
+            history_data = self.ticker.history(period=period, interval=interval, start=start_date, end=effective_end_date)
+            logging.info(f"YFinanceFetcher: For {self.ticker_symbol}, history_data is empty: {history_data.empty}. Shape: {history_data.shape}. Head: {history_data.head().to_string() if not history_data.empty else 'N/A'}")
+            return history_data
         except Exception as e:
-            logging.error(f"Error fetching historical prices for {self.ticker_symbol}: {e}")
+            logging.error(f"YFinanceFetcher: Exception fetching historical prices for {self.ticker_symbol}: {e}", exc_info=True)
             return pd.DataFrame()
 
     def get_financials(self, statement_type="financials", period="annual") -> pd.DataFrame:
