@@ -354,38 +354,92 @@ def get_financial_statements_response(ticker_symbol: str) -> LineItemResponse | 
         return None
 
 # --- Helper functions for financial metrics ---
-def _get_statement_value(df: pd.DataFrame | None, item_name: str, col_name_or_idx=0, default=None, prefer_float=True):
-    """Safely extracts a value from a DataFrame row/column."""
-    if df is None or df.empty or item_name not in df.index: return default
-    try:
-        # Determine the target column: if col_name_or_idx is a string, use it directly; otherwise, assume it's an integer index.
-        target_col = col_name_or_idx if isinstance(col_name_or_idx, str) else df.columns[col_name_or_idx]
-        if target_col not in df.columns: # Check if the resolved column name exists
-            logging.debug(f"Column '{target_col}' not found in DataFrame for item '{item_name}'.")
-            return default
-        value = df.loc[item_name, target_col]
-        if pd.isna(value) or value is None: return default
-        if prefer_float:
-            try: return float(value)
-            except (ValueError, TypeError): # If float conversion fails, return as string
-                logging.debug(f"Could not convert value '{value}' to float for item '{item_name}', returning as string.")
-                return str(value) 
-        return value 
-    except (KeyError, IndexError) as e: # Catch errors if item_name or col_idx is invalid
-        logging.debug(f"Error accessing item '{item_name}' at column '{col_name_or_idx}': {e}")
+def _get_statement_value(df: pd.DataFrame | None, item_names: list[str] | str, col_name_or_idx=0, default=None, prefer_float=True):
+    """
+    Safely extracts a value from a DataFrame row/column.
+    Tries a list of item names if provided, returning the first one found.
+    """
+    if df is None or df.empty:
         return default
 
-def _sum_last_n_quarters(df: pd.DataFrame | None, item_name: str, n: int = 4, default=None):
-    """Sums the 'n' most recent quarterly values for an item, ensuring numeric conversion."""
-    if df is None or df.empty or item_name not in df.index or len(df.columns) == 0 : return default
+    names_to_try = [item_names] if isinstance(item_names, str) else item_names
+
+    for name in names_to_try:
+        if name not in df.index:
+            logging.debug(f"Item '{name}' not found in DataFrame index. Trying next name if available.")
+            continue # Try next name in the list
+
+        try:
+            # Determine the target column: if col_name_or_idx is a string, use it directly; otherwise, assume it's an integer index.
+            target_col = col_name_or_idx if isinstance(col_name_or_idx, str) else df.columns[col_name_or_idx]
+            if target_col not in df.columns: # Check if the resolved column name exists
+                logging.debug(f"Column '{target_col}' not found in DataFrame for item '{name}'.")
+                # This case should ideally not be hit if column logic is sound, but good for robustness.
+                # Continue to the next name if this specific name fails for column reasons.
+                continue
+            
+            value = df.loc[name, target_col]
+            if pd.isna(value) or value is None:
+                # If value is NaN for this name, it's considered "found but empty", so return default.
+                # Or, one could argue to try the next name. For now, let's say finding the name means we use its value (or lack thereof).
+                return default 
+            
+            if prefer_float:
+                try:
+                    return float(value)
+                except (ValueError, TypeError): # If float conversion fails, return as string
+                    logging.debug(f"Could not convert value '{value}' to float for item '{name}', returning as string.")
+                    return str(value) 
+            return value # Return the first successfully retrieved value
+        except (KeyError, IndexError) as e: # Catch errors if item_name or col_idx is invalid for *this specific name*
+            logging.debug(f"Error accessing item '{name}' at column '{col_name_or_idx}': {e}. Trying next name.")
+            continue # Try next name
+    
+    logging.debug(f"None of the item names {names_to_try} found or valid in DataFrame.")
+    return default
+
+def _sum_last_n_quarters(df: pd.DataFrame | None, item_names: list[str] | str, n: int = 4, default=None, ticker_symbol: str = "N/A"):
+    """
+    Sums the 'n' most recent quarterly values for an item (or list of items),
+    ensuring numeric conversion.
+    Includes ticker_symbol for enhanced logging.
+    """
+    # logging.info(f"[{ticker_symbol}] _sum_last_n_quarters: Processing item_names: {item_names}") # Removed as per request
+    if df is None or df.empty or len(df.columns) == 0:
+        logging.debug(f"[{ticker_symbol}] _sum_last_n_quarters: DataFrame is None, empty, or has no columns. Returning default: {default}")
+        return default
+
+    names_to_try = [item_names] if isinstance(item_names, str) else item_names
+    selected_item_name = None
+
+    for name in names_to_try:
+        if name in df.index:
+            selected_item_name = name
+            logging.debug(f"[{ticker_symbol}] _sum_last_n_quarters: Found '{selected_item_name}' in DataFrame index.")
+            break # Found a valid item name
+    
+    if selected_item_name is None:
+        logging.debug(f"[{ticker_symbol}] _sum_last_n_quarters: None of the item names {names_to_try} found in DataFrame. Returning default: {default}")
+        return default
+
     num_cols_to_sum = min(n, len(df.columns)) # Use available columns if less than n
-    if num_cols_to_sum == 0: return default
+    if num_cols_to_sum == 0: 
+        logging.debug(f"[{ticker_symbol}] _sum_last_n_quarters: num_cols_to_sum is 0. Returning default: {default}")
+        return default
+        
     try:
         # Select first num_cols_to_sum columns, convert to numeric (errors to NaN), fill NaN with 0, then sum.
-        relevant_values = pd.to_numeric(df.loc[item_name].iloc[:num_cols_to_sum], errors='coerce').fillna(0)
-        return relevant_values.sum() if relevant_values.notna().any() else default # Return sum or default if all were NaN
+        quarterly_series = df.loc[selected_item_name].iloc[:num_cols_to_sum]
+        # logging.info(f"[{ticker_symbol}] _sum_last_n_quarters: Raw quarterly values for '{selected_item_name}': {quarterly_series.to_list()}") # Removed as per request
+        
+        relevant_values = pd.to_numeric(quarterly_series, errors='coerce').fillna(0)
+        # logging.info(f"[{ticker_symbol}] _sum_last_n_quarters: Numeric quarterly values (NaNs as 0) for '{selected_item_name}': {relevant_values.to_list()}") # Removed as per request
+        
+        total_sum = relevant_values.sum() if relevant_values.notna().any() else default # Return sum or default if all were NaN
+        # logging.info(f"[{ticker_symbol}] _sum_last_n_quarters: Calculated sum for '{selected_item_name}': {total_sum}") # Removed as per request
+        return total_sum
     except Exception as e: # Catch any other unexpected error during calculation
-        logging.debug(f"Exception in _sum_last_n_quarters for item '{item_name}': {e}")
+        logging.error(f"[{ticker_symbol}] _sum_last_n_quarters: Exception for item '{selected_item_name}': {e}", exc_info=True)
         return default
 
 def get_financial_metrics_response(ticker_symbol: str, include_historical: bool = False) -> FinancialMetricsResponse | None:
@@ -429,6 +483,12 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
 
         shares_outstanding, market_cap = info.get('sharesOutstanding'), info.get('marketCap')
 
+        # Log quarterly cash flow data - REMOVED as per request
+        # if cf_q is not None and not cf_q.empty:
+        #     logging.info(f"Raw quarterly cash flow data for {ticker_symbol}:\n{cf_q.to_string()}")
+        # else:
+        #     logging.info(f"Quarterly cash flow data (cf_q) is None or empty for {ticker_symbol}.")
+
         # Initialize with all fields from Pydantic model to ensure all are present, defaulting to None
         latest_metrics_dict = {field: None for field in FinancialMetrics.__annotations__}
         # Update with basic info and directly available metrics from yfinance ticker.info
@@ -449,9 +509,9 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
         })
 
         # Calculate TTM metrics using helper functions
-        revenue_ttm = _sum_last_n_quarters(income_q, 'Total Revenue', 4, _get_statement_value(income_a, 'Total Revenue'))
-        cogs_ttm = _sum_last_n_quarters(income_q, 'Cost Of Revenue', 4, _get_statement_value(income_a, 'Cost Of Revenue', default=0.0))
-        op_income_ttm = _sum_last_n_quarters(income_q, 'Operating Income', 4, _get_statement_value(income_a, 'Operating Income'))
+        revenue_ttm = _sum_last_n_quarters(income_q, 'Total Revenue', 4, _get_statement_value(income_a, 'Total Revenue'), ticker_symbol=ticker_symbol)
+        cogs_ttm = _sum_last_n_quarters(income_q, 'Cost Of Revenue', 4, _get_statement_value(income_a, 'Cost Of Revenue', default=0.0), ticker_symbol=ticker_symbol)
+        op_income_ttm = _sum_last_n_quarters(income_q, 'Operating Income', 4, _get_statement_value(income_a, 'Operating Income'), ticker_symbol=ticker_symbol)
         
         if revenue_ttm and revenue_ttm != 0: # Avoid division by zero for margin calculations
             if cogs_ttm is not None: latest_metrics_dict["gross_margin"] = (revenue_ttm - cogs_ttm) / revenue_ttm
@@ -465,12 +525,28 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
         else:
             latest_metrics_dict["ev_to_ebit"] = None # Ensure it's None if components are missing
 
-        op_cashflow_ttm = _sum_last_n_quarters(cf_q, 'Total Cash From Operating Activities', 4, _get_statement_value(cf_a, 'Total Cash From Operating Activities'))
-        capex_ttm = _sum_last_n_quarters(cf_q, 'Capital Expenditures', 4, _get_statement_value(cf_a, 'Capital Expenditures')) # Capex is usually negative
+        # Define possible keys for Operating Cash Flow
+        op_cash_flow_keys = ['Operating Cash Flow', 'Cash Flow From Continuing Operating Activities', 'Total Cash From Operating Activities']
+        
+        op_cashflow_ttm = _sum_last_n_quarters(cf_q, op_cash_flow_keys, 4, _get_statement_value(cf_a, op_cash_flow_keys), ticker_symbol=ticker_symbol)
+        # logging.info(f"[{ticker_symbol}] get_financial_metrics_response: Calculated op_cashflow_ttm: {op_cashflow_ttm}") # Removed as per request
+        if op_cashflow_ttm is None:
+            logging.warning(f"TTM Operating Cash Flow data not found for {ticker_symbol} using keys {op_cash_flow_keys}.")
+
+        # Define possible keys for Capital Expenditures
+        capex_keys = ['Capital Expenditure', 'Capital Expenditures']
+            
+        capex_ttm = _sum_last_n_quarters(cf_q, capex_keys, 4, _get_statement_value(cf_a, capex_keys, default=0.0), ticker_symbol=ticker_symbol) # Capex is usually negative
+        # logging.info(f"[{ticker_symbol}] get_financial_metrics_response: Calculated capex_ttm: {capex_ttm}") # Removed as per request
+        if capex_ttm is None:
+            logging.warning(f"TTM Capital Expenditures data not found for {ticker_symbol} using keys {capex_keys}.")
         
         fcf_ttm = None
         if op_cashflow_ttm is not None and capex_ttm is not None:
             fcf_ttm = op_cashflow_ttm + capex_ttm # Adding because capex is typically negative
+        # logging.info(f"[{ticker_symbol}] get_financial_metrics_response: Calculated fcf_ttm: {fcf_ttm}") # Removed as per request
+            
+        if fcf_ttm is not None: # Only proceed if fcf_ttm was successfully calculated
             latest_metrics_dict["free_cash_flow"] = fcf_ttm
             if shares_outstanding and shares_outstanding != 0:
                 latest_metrics_dict["free_cash_flow_per_share"] = fcf_ttm / shares_outstanding
@@ -530,8 +606,18 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
                 liab_h = _get_statement_value(bs_a, 'Total Liab', col_name_str)   # Match balance sheet date
                 if assets_h and liab_h: hist_metrics_data["book_value"] = assets_h - liab_h # Book value for that year
 
-                op_cf_h = _get_statement_value(cf_a, 'Total Cash From Operating Activities', col_name_str) # Match cash flow date
-                capex_h = _get_statement_value(cf_a, 'Capital Expenditures', col_name_str)           # Match cash flow date
+                # Use the same list of keys for historical operating cash flow
+                op_cash_flow_keys = ['Operating Cash Flow', 'Cash Flow From Continuing Operating Activities', 'Total Cash From Operating Activities']
+                op_cf_h = _get_statement_value(cf_a, op_cash_flow_keys, col_name_str) # Match cash flow date
+                if op_cf_h is None:
+                    logging.warning(f"Historical Operating Cash Flow data not found for {ticker_symbol} for period {report_period_hist} using keys {op_cash_flow_keys}.")
+                
+                # Use the same list of keys for historical capital expenditures
+                capex_keys = ['Capital Expenditure', 'Capital Expenditures']
+                capex_h = _get_statement_value(cf_a, capex_keys, col_name_str)           # Match cash flow date
+                if capex_h is None:
+                    logging.warning(f"Historical Capital Expenditures data not found for {ticker_symbol} for period {report_period_hist} using keys {capex_keys}.")
+                    
                 if op_cf_h and capex_h: hist_metrics_data["free_cash_flow"] = op_cf_h + capex_h
 
                 if revenue_h and assets_h and assets_h != 0:
