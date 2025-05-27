@@ -154,48 +154,9 @@ if __name__ == "__main__":
     tickers = [ticker.strip() for ticker in args.tickers.split(",")]
 
     # Select analysts
-    selected_analysts = None
-    # If tickers are provided via CLI, assume non-interactive mode for analyst and model selection
-    if args.tickers:
-        print("Tickers provided via CLI. Detecting available LLM provider for non-interactive run...")
-        selected_analysts = [value for _, value in ANALYST_ORDER] # Default to all analysts
-        
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-        
-        # Define placeholder values (ensure these match exactly what's in .env or would be default)
-
-        
- #       use_openai = openai_api_key and openai_api_key not in openai_placeholders
-        use_openai = openai_api_key
-        
-        if use_openai:
-            model_name = "gpt-4o" # Default OpenAI model
-            model_provider = ModelProvider.OPENAI.value
-            print(f"Using OpenAI model: {model_name} as valid OPENAI_API_KEY is available.")
-        # Explicitly check if the DeepSeek key is the known placeholder from .env
-        elif deepseek_api_key == 0:
-            default_deepseek_model_info = next((m for m in LLM_ORDER if m[2] == ModelProvider.DEEPSEEK.value and not m[0].endswith("(Custom)")), None)
-            if default_deepseek_model_info:
-                model_name = default_deepseek_model_info[1] # e.g., 'deepseek-chat' or 'deepseek-reasoner'
-                model_provider = ModelProvider.DEEPSEEK.value
-                print(f"Using DeepSeek model: {model_name} with placeholder DEEPSEEK_API_KEY ('{deepseek_api_key}') for testing.")
-            else: # This case should ideally not be hit if LLM_ORDER is correctly populated
-                print(f"{Fore.RED}No default DeepSeek model found in LLM_ORDER configuration. Exiting.{Style.RESET_ALL}")
-                sys.exit(1)
-        else: # Neither a valid OpenAI key nor the specific DeepSeek placeholder was found
-              # This branch would also be hit if DEEPSEEK_API_KEY is set to something else entirely (a real, non-placeholder key)
-              # but for this subtask, we are focused on the placeholder.
-            print(f"{Fore.RED}Required API key (valid OpenAI or specific DeepSeek placeholder '') not found for non-interactive run. Please check your .env file.{Style.RESET_ALL}")
-            print(f"DEBUG: OpenAI Key set: {bool(openai_api_key)} (value: '{openai_api_key}'), DeepSeek Key value: '{deepseek_api_key}'")
-            sys.exit(1)
-            
-        print(f"\nUsing default analysts: {', '.join(Fore.GREEN + sa.title().replace('_', ' ') + Style.RESET_ALL for sa in selected_analysts)}")
-        print(f"Using default model: {Fore.CYAN}{model_provider}{Style.RESET_ALL} - {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-    else: # Interactive mode
-        choices = questionary.checkbox(
-            "Select your AI analysts.",
-            choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
+    choices = questionary.checkbox(
+        "Select your AI analysts.",
+        choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
             instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done to run the hedge fund.\n",
             validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
             style=questionary.Style(
@@ -213,13 +174,13 @@ if __name__ == "__main__":
             sys.exit(0)
         else:
             selected_analysts = choices
-            print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in choices)}\n")
+            print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in selected_analysts)}\n")
 
-        # Select LLM model based on whether Ollama is being used
-        model_name = ""
-        model_provider = ""
+    # Select LLM model based on whether Ollama is being used
+    model_name = "" 
+    model_provider = "" 
 
-        if args.ollama:
+    if args.ollama:
             print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
 
             # Select from Ollama-specific models
@@ -289,6 +250,10 @@ if __name__ == "__main__":
                 print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
 
     # Create the workflow with selected analysts
+    if not selected_analysts: 
+        print("\nNo analysts selected or process interrupted. Exiting.")
+        sys.exit(0)
+        
     workflow = create_workflow(selected_analysts)
     app = workflow.compile()
 
