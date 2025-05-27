@@ -457,6 +457,14 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
             if cogs_ttm is not None: latest_metrics_dict["gross_margin"] = (revenue_ttm - cogs_ttm) / revenue_ttm
             if op_income_ttm: latest_metrics_dict["operating_margin"] = op_income_ttm / revenue_ttm
         
+        # Calculate and populate ev_to_ebit
+        enterprise_value = info.get('enterpriseValue') # This is already fetched and in latest_metrics_dict
+        if enterprise_value is not None and op_income_ttm is not None and op_income_ttm != 0:
+            ev_ebit_calculated = enterprise_value / op_income_ttm
+            latest_metrics_dict["ev_to_ebit"] = ev_ebit_calculated
+        else:
+            latest_metrics_dict["ev_to_ebit"] = None # Ensure it's None if components are missing
+
         op_cashflow_ttm = _sum_last_n_quarters(cf_q, 'Total Cash From Operating Activities', 4, _get_statement_value(cf_a, 'Total Cash From Operating Activities'))
         capex_ttm = _sum_last_n_quarters(cf_q, 'Capital Expenditures', 4, _get_statement_value(cf_a, 'Capital Expenditures')) # Capex is usually negative
         

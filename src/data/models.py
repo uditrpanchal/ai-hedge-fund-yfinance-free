@@ -60,6 +60,8 @@ class FinancialMetrics(BaseModel):
     earnings_per_share: float | None
     book_value_per_share: float | None
     free_cash_flow_per_share: float | None
+    free_cash_flow: float | None = None # Added
+    ev_to_ebit: float | None = None # Added
 
 
 class FinancialMetricsResponse(BaseModel):

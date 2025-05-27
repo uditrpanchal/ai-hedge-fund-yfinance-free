@@ -66,7 +66,7 @@ def michael_burry_agent(state: AgentState):  # noqa: C901  (complexity is fine h
         line_items = search_line_items(
             ticker,
             [
-                "free_cash_flow",
+                # "free_cash_flow", # Removed, will be sourced from FinancialMetrics
                 "net_income",
                 "total_debt",
                 "cash_and_equivalents",
@@ -189,9 +189,8 @@ def _analyze_value(metrics, line_items, market_cap):
     score = 0
     details: list[str] = []
 
-    # Free‑cash‑flow yield
-    latest_item = _latest_line_item(line_items)
-    fcf = getattr(latest_item, "free_cash_flow", None) if latest_item else None
+    # Free‑cash‑flow yield (sourced from FinancialMetrics)
+    fcf = getattr(metrics[0], "free_cash_flow", None) if metrics else None
     if fcf is not None and market_cap:
         fcf_yield = fcf / market_cap
         if fcf_yield >= 0.15:
