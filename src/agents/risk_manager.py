@@ -26,32 +26,50 @@ def risk_management_agent(state: AgentState):
         # Logging before get_prices call
         logging.info(f"RiskManager: Calling get_prices for {ticker} with start_date={data['end_date']}, end_date={data['end_date']}")
         
-        prices = get_prices(
+        prices_list, fetch_error = get_prices(
             ticker=ticker,
             start_date=data["end_date"],  # Just get the latest price
             end_date=data["end_date"],
         )
 
         # Logging after get_prices call
-        logging.info(f"RiskManager: Received prices for {ticker}: {prices}")
+        logging.info(f"RiskManager: Received for {ticker}: prices_list (count={len(prices_list)}), fetch_error='{fetch_error}'")
 
-        if not prices:
-            progress.update_status("risk_management_agent", ticker, "Warning: No price data found")
-            continue
+        error_for_ticker = None # To store specific error for this ticker for risk_analysis
 
-        prices_df = prices_to_df(prices)
-        
-        # Logging after prices_to_df call
-        logging.info(f"RiskManager: For {ticker}, prices_df is empty: {prices_df.empty}. Head: {prices_df.head().to_string() if not prices_df.empty else 'N/A'}")
-        
-        if not prices_df.empty:
-            current_price = prices_df["close"].iloc[-1]
-            current_prices[ticker] = current_price
-            progress.update_status("risk_management_agent", ticker, f"Current price: {current_price}")
+        if fetch_error:
+            error_for_ticker = fetch_error
+            progress.update_status("risk_management_agent", ticker, f"Warning: Fetch error - {fetch_error}")
+            # current_prices[ticker] will not be set, handled later
+        elif not prices_list:
+            error_for_ticker = "No price data found for the specific date after filtering."
+            progress.update_status("risk_management_agent", ticker, f"Warning: {error_for_ticker}")
+            # current_prices[ticker] will not be set
         else:
-            progress.update_status("risk_management_agent", ticker, "Warning: Empty price data")
+            prices_df = prices_to_df(prices_list)
+            logging.info(f"RiskManager: For {ticker}, prices_df is empty: {prices_df.empty}. Head: {prices_df.head().to_string() if not prices_df.empty else 'N/A'}")
+            
+            if prices_df.empty:
+                error_for_ticker = "Price data converted to empty DataFrame."
+                progress.update_status("risk_management_agent", ticker, f"Warning: {error_for_ticker}")
+                # current_prices[ticker] will not be set
+            else:
+                current_price = prices_df["close"].iloc[-1]
+                current_prices[ticker] = current_price # Populate current_prices only on success
+                progress.update_status("risk_management_agent", ticker, f"Current price: {current_price}")
+        
+        # If there was an error, store it in risk_analysis for this ticker, even if loop continues for others for portfolio value.
+        # This part will be used in the next loop.
+        if error_for_ticker and ticker in tickers: # Only initialize risk_analysis for main tickers here if error
+             risk_analysis[ticker] = {
+                "remaining_position_limit": 0.0,
+                "current_price": 0.0,
+                "reasoning": {"error": error_for_ticker}
+            }
+
 
     # Calculate total portfolio value based on current market prices (Net Liquidation Value)
+    # This loop uses current_prices, which is populated only with successfully fetched prices.
     total_portfolio_value = portfolio.get("cash", 0.0)
     
     for ticker, position in portfolio.get("positions", {}).items():
@@ -68,19 +86,22 @@ def risk_management_agent(state: AgentState):
         progress.update_status("risk_management_agent", ticker, "Calculating position limits")
         
         if ticker not in current_prices:
-            # Logging if ticker not in current_prices
-            logging.warning(f"RiskManager: Ticker {ticker} not found in current_prices. Price data might be missing or empty after processing.")
-            progress.update_status("risk_management_agent", ticker, "Failed: No price data available")
-            risk_analysis[ticker] = {
-                "remaining_position_limit": 0.0,
-                "current_price": 0.0,
-                "reasoning": {
-                    "error": "Missing price data for risk calculation"
+            # If an error was already recorded for this ticker from the fetching loop, use that.
+            # Otherwise, it's a generic missing price data error.
+            if ticker not in risk_analysis: # Should only happen if ticker was not in all_tickers (unlikely) or error init failed
+                logging.warning(f"RiskManager: Ticker {ticker} has no price and no prior error in risk_analysis. Setting generic error.")
+                risk_analysis[ticker] = {
+                    "remaining_position_limit": 0.0,
+                    "current_price": 0.0,
+                    "reasoning": {"error": "Missing price data for risk calculation (not found in current_prices)."}
                 }
-            }
-            continue
+            # Update progress with the specific error if available, or a generic one.
+            error_reason = risk_analysis[ticker]["reasoning"].get("error", "Failed: No price data available")
+            progress.update_status("risk_management_agent", ticker, error_reason)
+            logging.warning(f"RiskManager: Ticker {ticker} not in current_prices. Reason: {error_reason}")
+            continue # Skip to next ticker as price is missing for calculations.
             
-        current_price = current_prices[ticker]
+        current_price = current_prices[ticker] # This ticker is guaranteed to be in current_prices here
         
         # Calculate current market value of this position
         position = portfolio.get("positions", {}).get(ticker, {})

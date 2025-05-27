@@ -13,6 +13,7 @@ class Price(BaseModel):
 class PriceResponse(BaseModel):
     ticker: str
     prices: list[Price]
+    fetch_error: str | None = None
 
 
 class FinancialMetrics(BaseModel):

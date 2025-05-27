@@ -42,7 +42,7 @@ class YFinanceDataFetcher:
             return # self.valid_ticker remains False
 
         try:
-            self.ticker = yf.Ticker(ticker_symbol)
+            self.ticker = yf.Ticker(ticker_symbol, raise_errors=True) # Added raise_errors=True
             # Perform a quick check to see if the ticker is likely valid
             # by trying to access basic information.
             # yfinance often returns an empty info dict for invalid tickers after the first call.
@@ -124,10 +124,13 @@ class YFinanceDataFetcher:
             # Use effective_end_date in the history call
             history_data = self.ticker.history(period=period, interval=interval, start=start_date, end=effective_end_date)
             logging.info(f"YFinanceFetcher: For {self.ticker_symbol}, history_data is empty: {history_data.empty}. Shape: {history_data.shape}. Head: {history_data.head().to_string() if not history_data.empty else 'N/A'}")
-            return history_data
+            
+            if history_data.empty and start_date: # Check if specific request yielded no data
+                return history_data, "yfinance returned no data for the requested date range."
+            return history_data, None # Successful fetch
         except Exception as e:
             logging.error(f"YFinanceFetcher: Exception fetching historical prices for {self.ticker_symbol}: {e}", exc_info=True)
-            return pd.DataFrame()
+            return pd.DataFrame(), str(e) # Return empty DataFrame and error message
 
     def get_financials(self, statement_type="financials", period="annual") -> pd.DataFrame:
         """

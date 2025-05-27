@@ -48,13 +48,16 @@ def get_price_response(ticker_symbol: str, period="1y", interval="1d", start_dat
     try:
         fetcher = YFinanceDataFetcher(ticker_symbol)
         if not fetcher.valid_ticker:
-            logging.warning(f"get_price_response: Fetcher for {ticker_symbol} is invalid. Returning empty PriceResponse.")
-            return PriceResponse(ticker=ticker_symbol, prices=[])
+            logging.warning(f"get_price_response: Fetcher for {ticker_symbol} is invalid. Returning PriceResponse with error.")
+            # For invalid ticker, we can consider this a type of fetch error.
+            return PriceResponse(ticker=ticker_symbol, prices=[], fetch_error="Ticker is invalid or not found.")
         
-        prices_df = fetcher.get_historical_prices(period=period, interval=interval, start_date=start_date, end_date=end_date) # Corrected 'start' to 'start_date'
-        if prices_df is None or prices_df.empty:
-            logging.info(f"No historical price data found for {ticker_symbol} for the given parameters.")
-            return PriceResponse(ticker=ticker_symbol, prices=[])
+        prices_df, error_msg = fetcher.get_historical_prices(period=period, interval=interval, start_date=start_date, end_date=end_date)
+        
+        if error_msg or prices_df.empty:
+            effective_error = error_msg or "DataFrame empty after fetch."
+            logging.info(f"No historical price data or error for {ticker_symbol}: {effective_error}")
+            return PriceResponse(ticker=ticker_symbol, prices=[], fetch_error=effective_error)
         
         prices_list = []
         for index, row in prices_df.iterrows():
@@ -71,10 +74,11 @@ def get_price_response(ticker_symbol: str, period="1y", interval="1d", start_dat
                 open=row.get('Open'), close=row.get('Close'), high=row.get('High'), low=row.get('Low'),
                 volume=int(row.get('Volume')) if pd.notna(row.get('Volume')) else 0
             ))
-        return PriceResponse(ticker=ticker_symbol, prices=prices_list)
+        return PriceResponse(ticker=ticker_symbol, prices=prices_list, fetch_error=None)
     except Exception as e:
         logging.error(f"Error in get_price_response for {ticker_symbol}: {e}", exc_info=True)
-        return None # Return None for major errors
+        # For major errors during transformation itself, also return PriceResponse with error
+        return PriceResponse(ticker=ticker_symbol, prices=[], fetch_error=f"Transformation error: {str(e)}")
 
 def get_company_facts_response(ticker_symbol: str) -> CompanyFactsResponse | None:
     """

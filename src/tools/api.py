@@ -35,34 +35,67 @@ _cache = get_cache()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def get_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
-    """Fetch price data from cache or yfinance_transformers."""
-    # Using simple ticker-based key for get_prices, filtering applied after.
-    # This matches the original cache structure more closely.
-    if all_cached_prices := _cache.get_prices(ticker):
-        filtered_prices = [
-            Price(**price_dict) for price_dict in all_cached_prices
-            if start_date <= price_dict.get("time", "")[:10] <= end_date
+def get_prices(ticker: str, start_date: str, end_date: str) -> tuple[list[Price], str | None]:
+    """
+    Fetch price data from cache or yfinance_transformers.
+    Returns a tuple: (list_of_prices, error_message_or_None).
+    """
+    # Try to get from cache and filter for the specific date range
+    if all_cached_prices_dicts := _cache.get_prices(ticker):
+        # Convert dicts to Price objects before filtering
+        all_cached_prices_models = [Price(**price_dict) for price_dict in all_cached_prices_dicts]
+        filtered_prices_from_cache = [
+            price_model for price_model in all_cached_prices_models
+            if start_date <= price_model.time[:10] <= end_date
         ]
-        if filtered_prices: # If filtering results in non-empty list
+        if filtered_prices_from_cache:
             logging.info(f"Prices for {ticker} ({start_date}-{end_date}) found and filtered from cache.")
-            return filtered_prices
-        # If filtering results in empty, it means this specific date range wasn't in the broader cache. Fall through.
-
-    logging.info(f"Fetching prices for {ticker} from yfinance_transformers ({start_date}-{end_date}).")
-    yf_response = yf_get_price_response(ticker_symbol=ticker, start_date=start_date, end_date=end_date)
-
-    if yf_response is None or not yf_response.prices:
-        logging.info(f"No price data returned from yfinance_transformers for {ticker}.")
-        return []
-
-    prices = yf_response.prices
+            return filtered_prices_from_cache, None
+        else:
+            logging.info(f"Prices for {ticker} found in cache, but not for the range {start_date}-{end_date}. Fetching fresh data.")
     
-    # Cache the results as dicts. set_prices uses _merge_data.
-    if prices:
-        price_dicts = [p.model_dump() for p in prices]
-        _cache.set_prices(ticker, price_dicts)
-    return prices
+    # If not in cache for the specific range, or not in cache at all, fetch fresh data
+    logging.info(f"Fetching prices for {ticker} from yfinance_transformers ({start_date}-{end_date}).")
+    yf_response_obj = yf_get_price_response(ticker_symbol=ticker, start_date=start_date, end_date=end_date)
+
+    if yf_response_obj is None:
+        logging.error(f"Major error in yfinance_transformers.get_price_response for {ticker}.")
+        return [], "Major error in yfinance_transformers.get_price_response."
+
+    if yf_response_obj.fetch_error:
+        logging.warning(f"Fetch error for {ticker} from yfinance_transformers: {yf_response_obj.fetch_error}")
+        return [], yf_response_obj.fetch_error
+
+    if not yf_response_obj.prices:
+        logging.info(f"No price data available from yfinance_transformers for {ticker} (empty prices list).")
+        # This specific error message might be redundant if fetch_error already covers it,
+        # but kept for explicitness if fetch_error is None but prices are still empty.
+        return [], "No price data available from yfinance_transformers (empty prices list)."
+
+    # Successfully fetched new prices
+    newly_fetched_prices = yf_response_obj.prices
+    
+    # Cache the newly fetched results (original, unfiltered by date range from this function's perspective)
+    if newly_fetched_prices:
+        price_dicts_to_cache = [p.model_dump() for p in newly_fetched_prices]
+        _cache.set_prices(ticker, price_dicts_to_cache) # Assuming set_prices merges or overwrites as appropriate for the ticker.
+                                                       # The yf_get_price_response already fetches for start/end date,
+                                                       # so these are the "raw" prices for that attempt.
+                                                       # The filtering here is an additional check.
+
+    # Filter the newly fetched prices for the required start_date and end_date
+    # This might seem redundant if yf_get_price_response already filtered,
+    # but it ensures consistency and handles cases where yfinance might return a slightly broader range.
+    filtered_new_prices = [
+        price for price in newly_fetched_prices
+        if start_date <= price.time[:10] <= end_date
+    ]
+
+    if not filtered_new_prices:
+        logging.info(f"Prices fetched for {ticker}, but none match the range {start_date}-{end_date} after filtering.")
+        return [], "No data for specified range after filtering fresh fetch."
+        
+    return filtered_new_prices, None
 
 
 def get_financial_metrics(
@@ -337,8 +370,11 @@ def prices_to_df(prices: list[Price]) -> pd.DataFrame:
     return df
 
 
-# get_price_data remains the same as it already calls the local get_prices
-def get_price_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    """Fetches price data and converts it to a DataFrame."""
-    prices = get_prices(ticker, start_date, end_date)
-    return prices_to_df(prices)
+# get_price_data needs to be updated to handle the new return type of get_prices
+def get_price_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame: # Docstring not updated here, but should be
+    """Fetches price data and converts it to a DataFrame. Returns empty DF if error."""
+    prices_list, error_msg = get_prices(ticker, start_date, end_date)
+    if error_msg:
+        logging.warning(f"get_price_data for {ticker} encountered error: {error_msg}. Returning empty DataFrame.")
+        return pd.DataFrame()
+    return prices_to_df(prices_list)
