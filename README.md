@@ -1,4 +1,4 @@
-# AI Hedge Fund
+# AI Hedge Fund [ Using yfinance API ]
 
 This is a proof of concept for an AI-powered hedge fund.  The goal of this project is to explore the use of AI to make trading decisions.  This project is for **educational** purposes only and is not intended for real trading or investment.
 
@@ -78,7 +78,7 @@ poetry install
 cp .env.example .env
 ```
 
-4. Set your API keys:
+4. Set your API keys: [ FINANCIAL_DATASETS_API_KEY no longer required ]
 ```bash
 # For running LLMs hosted by openai (gpt-4o, gpt-4o-mini, etc.)
 # Get your OpenAI API key from https://platform.openai.com/
@@ -90,7 +90,7 @@ GROQ_API_KEY=your-groq-api-key
 
 # For getting financial data to power the hedge fund
 # Get your Financial Datasets API key from https://financialdatasets.ai/
-FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
+# FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
 ```
 
 ### Using Docker
