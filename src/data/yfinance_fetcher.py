@@ -11,6 +11,7 @@ It includes error handling and a validity check for ticker symbols.
 import yfinance as yf
 import pandas as pd
 import logging
+from datetime import datetime, timedelta # Add timedelta
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -106,8 +107,20 @@ class YFinanceDataFetcher:
         if not self.valid_ticker or not self.ticker:
             logging.info(f"get_historical_prices: Ticker {self.ticker_symbol} is invalid or not initialized. Returning empty data.")
             return pd.DataFrame()
+        
+        effective_end_date = end_date
+        if start_date and end_date and start_date == end_date:
+            try:
+                end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
+                effective_end_date = (end_date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
+                logging.info(f"Adjusted end_date to {effective_end_date} for single-day fetch on {start_date} for ticker {self.ticker_symbol}.")
+            except ValueError:
+                logging.warning(f"Could not parse end_date '{end_date}' to adjust for single-day fetch. Using original end_date.")
+                # Keep effective_end_date as original end_date
+
         try:
-            return self.ticker.history(period=period, interval=interval, start=start_date, end=end_date)
+            # Use effective_end_date in the history call
+            return self.ticker.history(period=period, interval=interval, start=start_date, end=effective_end_date)
         except Exception as e:
             logging.error(f"Error fetching historical prices for {self.ticker_symbol}: {e}")
             return pd.DataFrame()

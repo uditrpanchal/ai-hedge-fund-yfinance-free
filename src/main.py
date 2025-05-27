@@ -14,6 +14,7 @@ from src.utils.progress import progress
 from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
 from src.utils.ollama import ensure_ollama_and_model
 import os # Added for os.getenv
+import re # For JSON parsing
 
 import argparse
 from datetime import datetime
@@ -27,18 +28,55 @@ load_dotenv()
 init(autoreset=True)
 
 
-def parse_hedge_fund_response(response):
-    """Parses a JSON string and returns a dictionary."""
+def parse_hedge_fund_response(response_input):
+    """Parses a JSON string (potentially embedded in markdown) and returns a dictionary."""
+    response_to_parse = response_input
+    original_response_for_error = response_input # Keep original for full error context if needed
+
+    if isinstance(response_to_parse, str):
+        # Try to extract content within ```json ... ```
+        match = re.search(r"```json\s*(.*?)\s*```", response_to_parse, re.DOTALL | re.IGNORECASE)
+        if match:
+            response_to_parse = match.group(1)
+        else:
+            # If no ```json ... ```, try to find content within ``` ... ``` (any language or no language)
+            match = re.search(r"```\s*(.*?)\s*```", response_to_parse, re.DOTALL | re.IGNORECASE)
+            if match:
+                response_to_parse = match.group(1)
+            else:
+                # If no backticks, look for the first '{' and last '}' or first '[' and last ']'
+                # This is a simpler heuristic. More robust might be matching balanced braces/brackets.
+                # For now, using greedy matching up to the last corresponding symbol.
+                brace_match = re.search(r"(\{.*\})", response_to_parse, re.DOTALL)
+                bracket_match = re.search(r"(\[.*\])", response_to_parse, re.DOTALL) # Catches arrays of objects
+
+                # Prioritize object match, then array match
+                if brace_match and bracket_match:
+                    # If both object and array are found, choose the one that starts earlier
+                    if brace_match.start() <= bracket_match.start():
+                        response_to_parse = brace_match.group(1)
+                    else:
+                        response_to_parse = bracket_match.group(1)
+                elif brace_match:
+                    response_to_parse = brace_match.group(1)
+                elif bracket_match:
+                    response_to_parse = bracket_match.group(1)
+                # If neither, response_to_parse remains the original string (if it was a string)
+
     try:
-        return json.loads(response)
+        return json.loads(response_to_parse)
     except json.JSONDecodeError as e:
-        print(f"JSON decoding error: {e}\nResponse: {repr(response)}")
+        # Print the string that was attempted for parsing, and also the original if different
+        error_context = f"Attempted to parse: {repr(response_to_parse)}"
+        if response_to_parse is not original_response_for_error:
+            error_context += f"\nOriginal response: {repr(original_response_for_error)}"
+        print(f"JSON decoding error: {e}\n{error_context}")
         return None
-    except TypeError as e:
-        print(f"Invalid response type (expected string, got {type(response).__name__}): {e}")
+    except TypeError as e: # Handles if response_to_parse is not string-like (e.g. if input was not string and regex failed)
+        print(f"Invalid response type for JSON parsing (expected string, got {type(response_to_parse).__name__}): {e}\nOriginal input: {repr(original_response_for_error)}")
         return None
     except Exception as e:
-        print(f"Unexpected error while parsing response: {e}\nResponse: {repr(response)}")
+        print(f"Unexpected error while parsing response: {e}\nAttempted to parse: {repr(response_to_parse)}\nOriginal response: {repr(original_response_for_error)}")
         return None
 
 
