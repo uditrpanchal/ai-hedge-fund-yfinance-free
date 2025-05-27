@@ -126,7 +126,7 @@ class YFinanceDataFetcher:
             logging.info(f"YFinanceFetcher: For {self.ticker_symbol}, history_data is empty: {history_data.empty}. Shape: {history_data.shape}. Head: {history_data.head().to_string() if not history_data.empty else 'N/A'}")
             
             if history_data.empty and start_date: # Check if specific request yielded no data
-                return history_data, "yfinance returned no data for the requested date range."
+                return history_data, f"yfinance returned no data for {self.ticker_symbol} in the requested date range." # Refined error message
             return history_data, None # Successful fetch
         except Exception as e:
             logging.error(f"YFinanceFetcher: Exception fetching historical prices for {self.ticker_symbol}: {e}", exc_info=True)
