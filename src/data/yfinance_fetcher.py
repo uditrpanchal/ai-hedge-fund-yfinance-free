@@ -42,7 +42,7 @@ class YFinanceDataFetcher:
             return # self.valid_ticker remains False
 
         try:
-            self.ticker = yf.Ticker(ticker_symbol, raise_errors=True) # Added raise_errors=True
+            self.ticker = yf.Ticker(ticker_symbol) # Removed raise_errors=True
             # Perform a quick check to see if the ticker is likely valid
             # by trying to access basic information.
             # yfinance often returns an empty info dict for invalid tickers after the first call.
@@ -106,26 +106,62 @@ class YFinanceDataFetcher:
         """
         if not self.valid_ticker or not self.ticker:
             logging.info(f"get_historical_prices: Ticker {self.ticker_symbol} is invalid or not initialized. Returning empty data.")
-            return pd.DataFrame()
+            return pd.DataFrame(), "Ticker is invalid or not initialized." # Return error message as well
         
-        effective_end_date = end_date
+        actual_start_date = start_date
+        actual_end_date = end_date
+        query_period = period # Use original period by default
+
         if start_date and end_date and start_date == end_date:
+            # Logic for single-day request: fetch a 5-day window ending on that day
+            try:
+                requested_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+                actual_start_date = (requested_date_obj - timedelta(days=4)).strftime("%Y-%m-%d")
+                actual_end_date = (requested_date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
+                query_period = None # Dates will override period
+                logging.info(f"YFinanceFetcher: Single-day request for {start_date}. Adjusted fetch window to {actual_start_date} - {actual_end_date} for ticker {self.ticker_symbol}.")
+            except ValueError:
+                logging.warning(f"YFinanceFetcher: Could not parse date '{start_date}' for single-day adjustment. Using original dates {start_date}-{end_date}.")
+                # actual_start_date and actual_end_date remain original start_date, end_date
+                # If original dates are used, period might still be relevant if one of them is None
+                if not (actual_start_date and actual_end_date): # if parsing failed AND original dates were not complete
+                    query_period = period
+                else: # original dates are set, period should be None
+                    query_period = None
+
+        elif end_date: # If end_date is provided (but not a single-day request)
             try:
                 end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
-                effective_end_date = (end_date_obj + timedelta(days=4)).strftime("%Y-%m-%d") # Changed to days=4
-                logging.info(f"Adjusted end_date to {effective_end_date} for single-day fetch query on {start_date} for ticker {self.ticker_symbol}.") # Updated log message
+                actual_end_date = (end_date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
+                query_period = None # Dates will override period
+                logging.info(f"YFinanceFetcher: Adjusting end_date for range/period fetch to {actual_end_date} for ticker {self.ticker_symbol} (original end: {end_date}).")
             except ValueError:
-                logging.warning(f"Could not parse end_date '{end_date}' to adjust for single-day fetch query. Using original end_date.") # Updated log message
-                # Keep effective_end_date as original end_date
+                logging.warning(f"YFinanceFetcher: Could not parse end_date '{end_date}' for range adjustment. Using original end_date '{end_date}'.")
+                actual_end_date = end_date # Use original end_date string
+                # If original dates are used, period might still be relevant if one of them is None
+                if not (actual_start_date and actual_end_date):
+                     query_period = period
+                else: # original dates are set, period should be None
+                    query_period = None
         
-        logging.info(f"YFinanceFetcher: Attempting to fetch history for {self.ticker_symbol} with period={period}, interval={interval}, start={start_date}, end={effective_end_date}")
+        # If only period is provided (start_date and end_date are None), actual_start_date, actual_end_date will be None, and query_period will be the original period.
+        # If start_date is provided but not end_date, actual_start_date is set, actual_end_date is None, query_period is original period.
+        # yfinance handles period correctly if end_date is None (goes to most recent).
+        # If actual_start_date AND actual_end_date are set, query_period should be None.
+        if actual_start_date and actual_end_date:
+            query_period = None
+
+
+        logging.info(f"YFinanceFetcher: Attempting to fetch history for {self.ticker_symbol} with period={query_period}, interval={interval}, start={actual_start_date}, end={actual_end_date}")
 
         try:
-            # Use effective_end_date in the history call
-            history_data = self.ticker.history(period=period, interval=interval, start=start_date, end=effective_end_date)
+            history_data = self.ticker.history(period=query_period, 
+                                               interval=interval, 
+                                               start=actual_start_date, 
+                                               end=actual_end_date)
             logging.info(f"YFinanceFetcher: For {self.ticker_symbol}, history_data is empty: {history_data.empty}. Shape: {history_data.shape}. Head: {history_data.head().to_string() if not history_data.empty else 'N/A'}")
             
-            if history_data.empty and start_date: # Check if specific request yielded no data
+            if history_data.empty and (start_date or period != "1y"): # Check if specific request (date or non-default period) yielded no data
                 return history_data, f"yfinance returned no data for {self.ticker_symbol} in the requested date range." # Refined error message
             return history_data, None # Successful fetch
         except Exception as e:

@@ -6,6 +6,7 @@ from src.graph.state import AgentState, show_agent_reasoning
 
 import json
 import pandas as pd
+import logging # Added import
 import numpy as np
 
 from src.tools.api import get_prices, prices_to_df
@@ -34,18 +35,45 @@ def technical_analyst_agent(state: AgentState):
         progress.update_status("technical_analyst_agent", ticker, "Analyzing price data")
 
         # Get the historical price data
-        prices = get_prices(
+        prices_list, fetch_error = get_prices( # Updated to handle tuple
             ticker=ticker,
             start_date=start_date,
             end_date=end_date,
         )
 
-        if not prices:
-            progress.update_status("technical_analyst_agent", ticker, "Failed: No price data found")
+        error_reason_for_ticker = None
+
+        if fetch_error:
+            logging.error(f"TechnicalAnalystAgent for {ticker}: Failed to fetch prices: {fetch_error}")
+            error_reason_for_ticker = f"Failed to fetch prices: {fetch_error}"
+        elif not prices_list:
+            logging.warning(f"TechnicalAnalystAgent for {ticker}: No price data returned after fetch (list is empty).")
+            error_reason_for_ticker = "No price data returned after fetch (list is empty)."
+        
+        if error_reason_for_ticker:
+            technical_analysis[ticker] = {
+                "signal": "error", 
+                "confidence": 0, 
+                "reasoning": error_reason_for_ticker,
+                "strategy_signals": {} # Keep structure consistent
+            }
+            progress.update_status("technical_analyst_agent", ticker, error_reason_for_ticker)
             continue
 
         # Convert prices to a DataFrame
-        prices_df = prices_to_df(prices)
+        prices_df = prices_to_df(prices_list) # Use prices_list
+
+        if prices_df.empty:
+            logging.warning(f"TechnicalAnalystAgent for {ticker}: Price data converted to empty DataFrame.")
+            error_reason_for_ticker = "Price data converted to empty DataFrame."
+            technical_analysis[ticker] = {
+                "signal": "error", 
+                "confidence": 0, 
+                "reasoning": error_reason_for_ticker,
+                "strategy_signals": {}
+            }
+            progress.update_status("technical_analyst_agent", ticker, error_reason_for_ticker)
+            continue
 
         progress.update_status("technical_analyst_agent", ticker, "Calculating trend signals")
         trend_signals = calculate_trend_signals(prices_df)

@@ -15,6 +15,7 @@ from typing_extensions import Literal
 from src.utils.progress import progress
 from src.utils.llm import call_llm
 import statistics
+import logging # Added import
 
 
 class StanleyDruckenmillerSignal(BaseModel):
@@ -84,10 +85,30 @@ def stanley_druckenmiller_agent(state: AgentState):
         company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
 
         progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching recent price data for momentum")
-        prices = get_prices(ticker, start_date=start_date, end_date=end_date)
+        prices_list, fetch_error = get_prices(ticker, start_date=start_date, end_date=end_date) # Updated call
+
+        error_reason_for_ticker = None
+        if fetch_error:
+            logging.error(f"StanleyDruckenmillerAgent for {ticker}: Failed to fetch prices: {fetch_error}")
+            error_reason_for_ticker = f"Failed to fetch prices: {fetch_error}"
+        elif not prices_list:
+            logging.warning(f"StanleyDruckenmillerAgent for {ticker}: No price data returned after fetch (list is empty).")
+            error_reason_for_ticker = "No price data returned after fetch (list is empty)."
+        
+        if error_reason_for_ticker:
+            # Populate analysis_data and druck_analysis with error and continue
+            analysis_data[ticker] = {
+                "signal": "error", "score": 0, "max_score": 0, 
+                "reasoning_error": error_reason_for_ticker
+            }
+            druck_analysis[ticker] = {
+                "signal": "error", "confidence": 0, "reasoning": error_reason_for_ticker
+            }
+            progress.update_status("stanley_druckenmiller_agent", ticker, error_reason_for_ticker)
+            continue
 
         progress.update_status("stanley_druckenmiller_agent", ticker, "Analyzing growth & momentum")
-        growth_momentum_analysis = analyze_growth_and_momentum(financial_line_items, prices)
+        growth_momentum_analysis = analyze_growth_and_momentum(financial_line_items, prices_list) # Use prices_list
 
         progress.update_status("stanley_druckenmiller_agent", ticker, "Analyzing sentiment")
         sentiment_analysis = analyze_sentiment(company_news)
@@ -96,7 +117,7 @@ def stanley_druckenmiller_agent(state: AgentState):
         insider_activity = analyze_insider_activity(insider_trades)
 
         progress.update_status("stanley_druckenmiller_agent", ticker, "Analyzing risk-reward")
-        risk_reward_analysis = analyze_risk_reward(financial_line_items, prices)
+        risk_reward_analysis = analyze_risk_reward(financial_line_items, prices_list) # Use prices_list
 
         progress.update_status("stanley_druckenmiller_agent", ticker, "Performing Druckenmiller-style valuation")
         valuation_analysis = analyze_druckenmiller_valuation(financial_line_items, market_cap)

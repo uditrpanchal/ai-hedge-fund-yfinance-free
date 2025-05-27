@@ -14,6 +14,7 @@ import json
 from typing_extensions import Literal
 from src.utils.progress import progress
 from src.utils.llm import call_llm
+import logging # Added import
 
 
 class PeterLynchSignal(BaseModel):
@@ -85,7 +86,47 @@ def peter_lynch_agent(state: AgentState):
         company_news = get_company_news(ticker, end_date, start_date=None, limit=50)
 
         progress.update_status("peter_lynch_agent", ticker, "Fetching recent price data for reference")
-        prices = get_prices(ticker, start_date=start_date, end_date=end_date)
+        prices_list, fetch_error = get_prices(ticker, start_date=start_date, end_date=end_date) # Updated call
+
+        error_reason_for_ticker = None
+        if fetch_error:
+            logging.error(f"PeterLynchAgent for {ticker}: Failed to fetch reference prices: {fetch_error}")
+            error_reason_for_ticker = f"Failed to fetch reference prices: {fetch_error}"
+        elif not prices_list: # prices_list would be empty if get_prices had an issue not caught by fetch_error but returned empty list
+            logging.warning(f"PeterLynchAgent for {ticker}: No reference price data returned (list is empty).")
+            error_reason_for_ticker = "No reference price data returned (list is empty)."
+        # Note: prices_list itself is not directly used in subsequent calculations in this agent,
+        # but its successful fetch might be an implicit prerequisite or for future use.
+        # If it were critical, the error handling would be more stringent here.
+        # For now, we log the error and proceed, as other data points are primary.
+        # If an error occurred, we can still proceed with other analyses but note it.
+        # If the error should halt analysis for the ticker, we would set up analysis_data[ticker] with error and continue.
+        # For this refactor, let's assume if reference prices fail, we should note it in reasoning for the LLM.
+        # However, the prompt asks to return an error state. So, we will set an error for the ticker.
+
+        if error_reason_for_ticker:
+            lynch_analysis[ticker] = {
+                "signal": "error", 
+                "confidence": 0, 
+                "reasoning": error_reason_for_ticker
+            }
+            progress.update_status("peter_lynch_agent", ticker, error_reason_for_ticker)
+            # If we want to stop processing for this ticker entirely:
+            # continue 
+            # For now, let's allow other analyses to run and include this error in the final reasoning if needed.
+            # The prompt implies we should stop processing for the ticker. So, let's do that.
+            analysis_data[ticker] = { # Use analysis_data for consistency if LLM uses it later
+                "signal": "error",
+                "score": 0,
+                "max_score": 0,
+                "reasoning_error": error_reason_for_ticker # Add a specific field for this error
+            }
+            # The LLM prompt for this agent doesn't directly use a "reasoning_error" field from analysis_data.
+            # It's better to structure the error directly into what the LLM expects or what the agent output expects.
+            # The agent output is lynch_analysis[ticker] = {"signal": ..., "confidence": ..., "reasoning": ...}
+            # So, we set that.
+            progress.update_status("peter_lynch_agent", ticker, error_reason_for_ticker)
+            continue # Stop processing for this ticker
 
         # Perform sub-analyses:
         progress.update_status("peter_lynch_agent", ticker, "Analyzing growth")
