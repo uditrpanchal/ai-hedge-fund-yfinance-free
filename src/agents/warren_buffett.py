@@ -424,7 +424,7 @@ def generate_buffett_output(
                 Analysis Data for {ticker}:
                 {analysis_data}
 
-                Return the trading signal in the following JSON format exactly:
+                Return the trading signal in the following JSON format exactly. Ensure that all string values, especially within the 'reasoning' field, properly escape any special characters such as newlines (as '\\n'), double quotes (as '\\"'), and backslashes (as '\\\\').
                 {{
                   "signal": "bullish" | "bearish" | "neutral",
                   "confidence": float between 0 and 100,
