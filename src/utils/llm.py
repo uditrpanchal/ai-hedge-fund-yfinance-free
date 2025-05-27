@@ -76,45 +76,22 @@ def call_llm(
 
                 if first_brace_index != -1 and last_brace_index != -1 and last_brace_index > first_brace_index:
                     json_like_text = response_text[first_brace_index : last_brace_index + 1]
+                    response_text = json_like_text # Use the extracted JSON-like text directly
                     
-                    try:
-                        # Regexes to find individual fields within json_like_text
-                        signal_match = re.search(r'"signal"\s*:\s*"([^"]*)"', json_like_text)
-                        confidence_match = re.search(r'"confidence"\s*:\s*([\d.]+)', json_like_text)
-                        # This regex for reasoning allows it to span multiple lines due to re.DOTALL
-                        # and correctly handles escaped quotes " within the reasoning text.
-                        reasoning_match = re.search(r'"reasoning"\s*:\s*"((?:\\"|[^"])*)"', json_like_text, re.DOTALL)
+                    # The problematic regex block has been removed.
+                    # Pydantic will now handle parsing and validation.
 
-                        if signal_match and confidence_match and reasoning_match:
-                            signal_value = signal_match.group(1)
-                            confidence_value = float(confidence_match.group(1))
-                            reasoning_value = reasoning_match.group(1) # This is a Python string. json.dumps will escape it.
-                            
-                            reconstructed_data = {
-                                "signal": signal_value,
-                                "confidence": confidence_value,
-                                "reasoning": reasoning_value
-                            }
-                            response_text = json.dumps(reconstructed_data) # Clean JSON string
-                            logging.info(f"Successfully extracted values and reconstructed JSON for agent '{agent_name}'.")
-                        else:
-                            # Log which fields were not found by regex
-                            missing_fields = []
-                            if not signal_match: missing_fields.append("signal")
-                            if not confidence_match: missing_fields.append("confidence")
-                            if not reasoning_match: missing_fields.append("reasoning")
-                            logging.warning(f"Regex extraction failed for agent '{agent_name}'. Missing fields: {missing_fields} from block: '{json_like_text[:500]}...'. Falling back.")
-                            raise ValueError("Regex extraction failed.") # Trigger fallback
+                    # Fallback logic for basic cleaning if needed (e.g. if Pydantic fails)
+                    # This part is a bit tricky as Pydantic expects a clean JSON string.
+                    # The original fallback logic was inside the removed try-except.
+                    # For now, we rely on Pydantic's parsing. If it fails, the main try-except will catch it.
+                    # If specific pre-cleaning for Pydantic is needed, it would go here.
+                    # For example, ensuring newlines within strings are escaped if not already.
+                    # However, json_like_text should ideally be valid or near-valid JSON.
 
-                    except Exception as e_extract: # Catch errors from regex or reconstruction
-                        logging.warning(f"Error during regex extraction/reconstruction for agent '{agent_name}': {e_extract}. Falling back to basic cleaning of raw response.")
-                        # Fallback logic: basic newline escaping on original raw_response_text
-                        # Important: escape backslashes first!
-                        response_text = raw_response_text.replace('\\', '\\\\')
-                        response_text = response_text.replace('\r\n', '\\n').replace('\n', '\\n').replace('\r', '\\r').replace('\"', '\\"')
-                        if isinstance(response_text, str): response_text = response_text.strip()
                 else: # No { } block found in raw_response_text
                     logging.warning(f"Could not isolate a JSON-like block from raw_response_text for agent '{agent_name}'. Applying basic escapes and strip to raw text.")
+                    # Important: escape backslashes first!
                     response_text = raw_response_text.replace('\\', '\\\\')
                     response_text = response_text.replace('\r\n', '\\n').replace('\n', '\\n').replace('\r', '\\r').replace('\"', '\\"')
                     if isinstance(response_text, str): response_text = response_text.strip()
