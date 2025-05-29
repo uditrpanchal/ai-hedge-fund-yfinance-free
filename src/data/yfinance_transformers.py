@@ -498,7 +498,8 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
             "price_to_earnings_ratio": info.get('trailingPE'), "price_to_book_ratio": info.get('priceToBook'),
             "price_to_sales_ratio": info.get('priceToSalesTrailing12Months'),
             "enterprise_value_to_ebitda_ratio": info.get('enterpriseToEbitda'),
-            "enterprise_value_to_revenue_ratio": info.get('enterpriseToRevenue'),
+            "enterprise_value_to_revenue_ratio": info.get('enterpriseToRevenue'), # beta is missing here, will add
+            "beta": info.get('beta'), # Added beta here
             "peg_ratio": info.get('pegRatio'), "return_on_equity": info.get('returnOnEquity'),
             "return_on_assets": info.get('returnOnAssets'), "current_ratio": info.get('currentRatio'),
             "quick_ratio": info.get('quickRatio'), "debt_to_equity": info.get('debtToEquity'),
@@ -510,8 +511,10 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
 
         # Calculate TTM metrics using helper functions
         revenue_ttm = _sum_last_n_quarters(income_q, 'Total Revenue', 4, _get_statement_value(income_a, 'Total Revenue'), ticker_symbol=ticker_symbol)
+        latest_metrics_dict["revenue"] = revenue_ttm # Assign calculated TTM value
         cogs_ttm = _sum_last_n_quarters(income_q, 'Cost Of Revenue', 4, _get_statement_value(income_a, 'Cost Of Revenue', default=0.0), ticker_symbol=ticker_symbol)
         op_income_ttm = _sum_last_n_quarters(income_q, 'Operating Income', 4, _get_statement_value(income_a, 'Operating Income'), ticker_symbol=ticker_symbol)
+        latest_metrics_dict["ebit"] = op_income_ttm # Assign calculated TTM value
         
         if revenue_ttm and revenue_ttm != 0: # Avoid division by zero for margin calculations
             if cogs_ttm is not None: latest_metrics_dict["gross_margin"] = (revenue_ttm - cogs_ttm) / revenue_ttm
@@ -519,7 +522,7 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
         
         # Calculate and populate ev_to_ebit
         enterprise_value = info.get('enterpriseValue') # This is already fetched and in latest_metrics_dict
-        if enterprise_value is not None and op_income_ttm is not None and op_income_ttm != 0:
+        if enterprise_value is not None and op_income_ttm is not None and op_income_ttm != 0: # Uses op_income_ttm directly
             ev_ebit_calculated = enterprise_value / op_income_ttm
             latest_metrics_dict["ev_to_ebit"] = ev_ebit_calculated
         else:
@@ -527,27 +530,40 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
 
         # Define possible keys for Operating Cash Flow
         op_cash_flow_keys = ['Operating Cash Flow', 'Cash Flow From Continuing Operating Activities', 'Total Cash From Operating Activities']
-        
         op_cashflow_ttm = _sum_last_n_quarters(cf_q, op_cash_flow_keys, 4, _get_statement_value(cf_a, op_cash_flow_keys), ticker_symbol=ticker_symbol)
-        # logging.info(f"[{ticker_symbol}] get_financial_metrics_response: Calculated op_cashflow_ttm: {op_cashflow_ttm}") # Removed as per request
         if op_cashflow_ttm is None:
             logging.warning(f"TTM Operating Cash Flow data not found for {ticker_symbol} using keys {op_cash_flow_keys}.")
 
         # Define possible keys for Capital Expenditures
         capex_keys = ['Capital Expenditure', 'Capital Expenditures']
-            
         capex_ttm = _sum_last_n_quarters(cf_q, capex_keys, 4, _get_statement_value(cf_a, capex_keys, default=0.0), ticker_symbol=ticker_symbol) # Capex is usually negative
-        # logging.info(f"[{ticker_symbol}] get_financial_metrics_response: Calculated capex_ttm: {capex_ttm}") # Removed as per request
         if capex_ttm is None:
             logging.warning(f"TTM Capital Expenditures data not found for {ticker_symbol} using keys {capex_keys}.")
+
+        interest_expense_ttm = _sum_last_n_quarters(income_q, ['Interest Expense', 'Interest Expense Non Operating'], 4, _get_statement_value(income_a, ['Interest Expense', 'Interest Expense Non Operating']), ticker_symbol=ticker_symbol)
+        latest_metrics_dict["interest_expense"] = interest_expense_ttm # Assign calculated TTM value
+
+        # Calculate Interest Coverage using values from latest_metrics_dict
+        if latest_metrics_dict.get("ebit") is not None and latest_metrics_dict.get("interest_expense") is not None:
+            current_ebit = latest_metrics_dict["ebit"]
+            current_interest_expense = latest_metrics_dict["interest_expense"]
+            if current_interest_expense is not None and current_interest_expense != 0: 
+                latest_metrics_dict["interest_coverage"] = current_ebit / abs(current_interest_expense)
+            elif current_ebit == 0 and (current_interest_expense is None or current_interest_expense == 0) : 
+                latest_metrics_dict["interest_coverage"] = None
+            elif current_ebit is not None and current_ebit != 0 and (current_interest_expense is None or current_interest_expense == 0): 
+                latest_metrics_dict["interest_coverage"] = float('inf') 
+            else: 
+                latest_metrics_dict["interest_coverage"] = None
+        else:
+            latest_metrics_dict["interest_coverage"] = None
         
         fcf_ttm = None
         if op_cashflow_ttm is not None and capex_ttm is not None:
             fcf_ttm = op_cashflow_ttm + capex_ttm # Adding because capex is typically negative
-        # logging.info(f"[{ticker_symbol}] get_financial_metrics_response: Calculated fcf_ttm: {fcf_ttm}") # Removed as per request
+        latest_metrics_dict["free_cash_flow"] = fcf_ttm # Assign calculated TTM value
             
         if fcf_ttm is not None: # Only proceed if fcf_ttm was successfully calculated
-            latest_metrics_dict["free_cash_flow"] = fcf_ttm
             if shares_outstanding and shares_outstanding != 0:
                 latest_metrics_dict["free_cash_flow_per_share"] = fcf_ttm / shares_outstanding
             if market_cap and market_cap != 0 and fcf_ttm is not None: # Ensure fcf_ttm was calculated
@@ -586,16 +602,63 @@ def get_financial_metrics_response(ticker_symbol: str, include_historical: bool 
                 hist_metrics_data = {field: None for field in FinancialMetrics.__annotations__} # Initialize all fields
                 hist_metrics_data.update({ # Basic info for this historical period
                     "ticker": ticker_symbol, "report_period": report_period_hist, "period": "annual", "currency": currency,
-                    # Price-based ratios require historical prices, not calculated here, so explicitly None
+                    # Initialize price-based ratios to None, will be calculated if possible
                     "market_cap": None, "price_to_earnings_ratio": None, 
                     "price_to_book_ratio": None, "price_to_sales_ratio": None,
                 })
 
+                # Fetch historical price for the period end date
+                price_h = fetcher.get_price_for_date(col_date_obj.date()) # col_date_obj is Timestamp, convert to date
+
                 # Calculate metrics using data for this specific historical column (col_name_str)
                 revenue_h = _get_statement_value(income_a, 'Total Revenue', col_name_str)
+                hist_metrics_data["revenue"] = revenue_h
                 cogs_h = _get_statement_value(income_a, 'Cost Of Revenue', col_name_str, default=0.0)
                 op_income_h = _get_statement_value(income_a, 'Operating Income', col_name_str)
+                hist_metrics_data["ebit"] = op_income_h
                 net_income_h = _get_statement_value(income_a, 'Net Income', col_name_str)
+                hist_metrics_data["earnings_per_share"] = None # Initialize
+
+                # Get historical shares outstanding
+                shares_outstanding_h = _get_statement_value(bs_a, "Ordinary Shares Number", col_name_str)
+                if shares_outstanding_h is None or shares_outstanding_h == 0:
+                    # Fallback to current shares outstanding from info
+                    shares_outstanding_h = info.get('sharesOutstanding')
+                    if shares_outstanding_h:
+                        logging.warning(f"[{ticker_symbol}] Historical 'Ordinary Shares Number' not available for period {report_period_hist}. "
+                                        f"Falling back to current 'sharesOutstanding' ({shares_outstanding_h}) for historical P/E calculation.")
+                    else: # Still no shares outstanding
+                        logging.warning(f"[{ticker_symbol}] Historical 'Ordinary Shares Number' and current 'sharesOutstanding' "
+                                        f"are unavailable for period {report_period_hist}. Cannot calculate historical EPS or P/E.")
+                        shares_outstanding_h = None # Ensure it's None
+
+                if net_income_h is not None and shares_outstanding_h is not None and shares_outstanding_h != 0:
+                    eps_h = net_income_h / shares_outstanding_h
+                    hist_metrics_data["earnings_per_share"] = eps_h
+                    if price_h is not None and eps_h != 0:
+                        pe_ratio_h = price_h / eps_h
+                        hist_metrics_data["price_to_earnings_ratio"] = pe_ratio_h
+                    elif price_h is None:
+                        logging.info(f"[{ticker_symbol}] Historical price not available for {report_period_hist}, cannot calculate P/E.")
+                    elif eps_h == 0:
+                        logging.info(f"[{ticker_symbol}] Historical EPS is zero for {report_period_hist}, P/E is undefined (or infinite). Setting to None.")
+                
+                interest_expense_h = _get_statement_value(income_a, ['Interest Expense', 'Interest Expense Non Operating'], col_name_str)
+                hist_metrics_data["interest_expense"] = interest_expense_h
+
+                if hist_metrics_data.get("ebit") is not None and hist_metrics_data.get("interest_expense") is not None:
+                    current_ebit_h = hist_metrics_data["ebit"]
+                    current_interest_expense_h = hist_metrics_data["interest_expense"]
+                    if current_interest_expense_h is not None and current_interest_expense_h != 0: # Check interest_expense_h is not None
+                        hist_metrics_data["interest_coverage"] = current_ebit_h / abs(current_interest_expense_h)
+                    elif current_ebit_h == 0 and (current_interest_expense_h is None or current_interest_expense_h == 0):
+                        hist_metrics_data["interest_coverage"] = None
+                    elif current_ebit_h is not None and current_ebit_h != 0 and (current_interest_expense_h is None or current_interest_expense_h == 0):
+                        hist_metrics_data["interest_coverage"] = float('inf')
+                    else:
+                        hist_metrics_data["interest_coverage"] = None
+                else:
+                    hist_metrics_data["interest_coverage"] = None
                 
                 if revenue_h and revenue_h != 0: # Avoid division by zero
                     if cogs_h is not None: hist_metrics_data["gross_margin"] = (revenue_h - cogs_h) / revenue_h

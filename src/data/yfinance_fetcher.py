@@ -11,7 +11,7 @@ It includes error handling and a validity check for ticker symbols.
 import yfinance as yf
 import pandas as pd
 import logging
-from datetime import datetime, timedelta # Add timedelta
+from datetime import datetime, timedelta, date # Ensure date is imported
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -259,3 +259,50 @@ class YFinanceDataFetcher:
         except Exception as e: # Catch any other exceptions during the fetch
             logging.error(f"Error fetching insider transactions for {self.ticker_symbol}: {e}")
             return pd.DataFrame()
+
+    def get_price_for_date(self, date_obj: date) -> float | None:
+        '''
+        Fetches the closing stock price for the ticker for a specific date.
+        If the exact date is not a trading day, it tries to get the price
+        from the closest prior trading day within a small window.
+        '''
+        if not self.valid_ticker or self.ticker is None:
+            logging.warning(f"[{self.ticker_symbol}] Cannot fetch price, ticker is not valid.")
+            return None
+
+        # Define a window around the target date to search for a valid price
+        # Fetch a slightly larger window to increase chances of getting data, e.g., 7 days before, 2 days after
+        start_date_str = (date_obj - timedelta(days=7)).strftime('%Y-%m-%d')
+        end_date_str = (date_obj + timedelta(days=2)).strftime('%Y-%m-%d') # Ensure end date is after date_obj
+
+        try:
+            logging.info(f"[{self.ticker_symbol}] Fetching historical data for price near {date_obj.strftime('%Y-%m-%d')} (window: {start_date_str} to {end_date_str})")
+            hist_df = self.ticker.history(start=start_date_str, end=end_date_str, interval="1d")
+            
+            if hist_df.empty:
+                logging.warning(f"[{self.ticker_symbol}] No historical data found in window for date {date_obj.strftime('%Y-%m-%d')}")
+                return None
+
+            # Filter for dates on or before the target date_obj, then take the latest one
+            hist_df_filtered = hist_df[hist_df.index.date <= date_obj]
+            
+            if hist_df_filtered.empty:
+                logging.warning(f"[{self.ticker_symbol}] No historical data found on or before {date_obj.strftime('%Y-%m-%d')} in the fetched window.")
+                # As a fallback, if no data on or before, try the earliest data point after date_obj in the original window if it's close
+                hist_df_after = hist_df[hist_df.index.date > date_obj]
+                if not hist_df_after.empty:
+                    closest_price = hist_df_after['Close'].iloc[0]
+                    closest_date = hist_df_after.index[0].date()
+                    logging.info(f"[{self.ticker_symbol}] No price on or before {date_obj}. Using closest price after: {closest_price} on {closest_date}")
+                    return float(closest_price)
+                return None
+
+            # Get the closing price of the last available day
+            price = hist_df_filtered['Close'].iloc[-1]
+            actual_date = hist_df_filtered.index[-1].date()
+            logging.info(f"[{self.ticker_symbol}] Price for {date_obj.strftime('%Y-%m-%d')} (found on {actual_date.strftime('%Y-%m-%d')}): {price}")
+            return float(price)
+
+        except Exception as e:
+            logging.error(f"[{self.ticker_symbol}] Error fetching price for date {date_obj.strftime('%Y-%m-%d')}: {e}", exc_info=True)
+            return None
